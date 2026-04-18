@@ -190,8 +190,13 @@ jobs:
           gem install cocoapods --no-document
           cd iosApp && pod install --repo-update
 
-      - name: 📦 Generate Xcode Project
-        run: ./gradlew :composeApp:generateXcodeProject --stacktrace
+      # In standard KMP/CMP projects the Xcode project already lives in the
+      # repo — there is no Gradle task to "generate" it. Instead we pre-build
+      # the Kotlin/Native framework so Xcode consumes it without re-invoking
+      # Gradle during the xcodebuild step (avoids runner PATH issues).
+      - name: 🧩 Compile Kotlin/Native Framework (iOS Simulator)
+        run: |
+          ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64 --stacktrace
 
       - name: 🔨 Build iOS Simulator
         working-directory: iosApp
@@ -213,6 +218,7 @@ jobs:
             -configuration Debug \
             -parallelizeTargets \
             CODE_SIGNING_ALLOWED=NO \
+            KOTLIN_FRAMEWORK_BUILD_TYPE=DEBUG \
             | xcpretty --color
 
   # ============================================================
@@ -244,12 +250,13 @@ jobs:
       - name: 👑 Fix Gradle Permissions
         run: chmod +x ./gradlew
 
-      # Node is used by the Kotlin/Wasm toolchain internally.
+      # Node is used internally by the Kotlin/Wasm toolchain — not as a
+      # declared JS dependency — so no package-lock.json or yarn.lock exists.
+      # Omitting `cache:` prevents the "lock file not found" error.
       - name: 📦 Setup Node 22 LTS
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
 
       - name: 🔨 Build WASM Distribution
         run: ./gradlew :composeApp:wasmJsBrowserDistribution --stacktrace
