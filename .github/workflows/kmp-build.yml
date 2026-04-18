@@ -1,169 +1,333 @@
-name: 🎯 KMP Debug Build
+name: 🚀 KMP CI/CD Pipeline
 
 on:
   push:
     branches: [main, master, develop]
   pull_request:
-    branches: [main, master]
+    branches: [main, master, develop]
   workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Force deploy web to GitHub Pages (skips branch check)'
+        required: false
+        default: 'false'
+        type: boolean
 
+# Cancel in-flight runs for the same ref, but NEVER cancel main/master.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
 
 env:
   JAVA_VERSION: '21'
-  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.jvmargs=-Xmx4g"
+  GRADLE_OPTS: >-
+    -Dorg.gradle.daemon=false
+    -Dorg.gradle.parallel=true
+    -Dorg.gradle.caching=true
+    -Dorg.gradle.jvmargs=-Xmx4g
+    -XX:MaxMetaspaceSize=512m
+  KONAN_CACHE_PATH: ~/.konan
 
+# ============================================================
+# 🔍 VALIDATE — lint + wrapper integrity (gates all jobs)
+# ============================================================
 jobs:
-  # ==========================================
-  # 🤖 Android Debug
-  # ==========================================
-  android:
-    name: 🤖 Android Debug
+  validate:
+    name: 🔍 Validate & Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
+    permissions:
+      contents: read
 
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 👑 Fix Gradle Permission
-        run: chmod +x ./gradlew
+      # Prevents supply-chain attacks via a tampered gradlew binary.
+      - name: 🔐 Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v4
 
-      - name: ☕ Setup JDK
+      - name: ☕ Setup JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
-          cache: gradle
+          distribution: temurin
+
+      # Handles all Gradle caching (build cache + dependency cache).
+      # Replaces the old `cache: gradle` shortcut in setup-java.
+      - name: 🗂️ Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+
+      - name: 👑 Fix Gradle Permissions
+        run: chmod +x ./gradlew
+
+      - name: 🔍 Run Android Lint
+        run: ./gradlew :composeApp:lintDebug --stacktrace
+
+      - name: 📊 Upload Lint Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report-${{ github.run_number }}
+          path: '**/build/reports/lint-results*.html'
+          retention-days: 14
+          if-no-files-found: warn
+
+  # ============================================================
+  # 🤖 ANDROID — unit tests + debug APK
+  # ============================================================
+  android:
+    name: 🤖 Android Debug
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: validate
+    permissions:
+      contents: read
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - name: 🗂️ Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+
+      - name: 👑 Fix Gradle Permissions
+        run: chmod +x ./gradlew
 
       - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 🧪 Test
+      - name: 🧪 Unit Tests
         run: ./gradlew :composeApp:testDebugUnitTest --stacktrace
 
-      - name: 🔨 Build Debug APK
-        run: ./gradlew :composeApp:assembleDebug --stacktrace
-
-      - name: 📤 Upload APK
+      - name: 📊 Upload Test Results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-debug-apk
+          name: android-test-results-${{ github.run_number }}
+          path: '**/build/reports/tests/'
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: 🔨 Assemble Debug APK
+        run: ./gradlew :composeApp:assembleDebug --stacktrace
+
+      - name: 📤 Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          # SHA + run number makes artifacts uniquely traceable.
+          name: android-debug-${{ github.sha }}-${{ github.run_number }}
           path: composeApp/build/outputs/apk/debug/*.apk
           retention-days: 7
+          if-no-files-found: error
 
-  # ==========================================
-  # 🍎 iOS Debug
-  # ==========================================
+  # ============================================================
+  # 🍎 iOS — simulator debug build
+  # ============================================================
   ios:
     name: 🍎 iOS Debug
-    runs-on: macos-latest
-    timeout-minutes: 45
+    runs-on: macos-15        # Xcode 16, Apple Silicon runner
+    timeout-minutes: 60
+    needs: validate
+    permissions:
+      contents: read
 
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 👑 Fix Gradle Permission
-        run: chmod +x ./gradlew
-
-      - name: ☕ Setup JDK
+      - name: ☕ Setup JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
-          cache: gradle
+          distribution: temurin
 
-      - name: 📱 Setup Xcode
+      - name: 🗂️ Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+
+      # Kotlin/Native compiles a full toolchain per OS — caching it is critical.
+      - name: 💎 Cache Kotlin/Native Toolchain
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.KONAN_CACHE_PATH }}
+          key: konan-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/libs.versions.toml') }}
+          restore-keys: konan-${{ runner.os }}-
+
+      - name: 💎 Cache CocoaPods
+        if: hashFiles('iosApp/Podfile') != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            iosApp/Pods
+            ~/.cocoapods
+          key: pods-${{ runner.os }}-${{ hashFiles('iosApp/Podfile.lock') }}
+          restore-keys: pods-${{ runner.os }}-
+
+      - name: 👑 Fix Gradle Permissions
+        run: chmod +x ./gradlew
+
+      - name: 📱 Select Latest Xcode
         run: |
-          sudo xcode-select -s $(ls -d /Applications/Xcode*.app | sort -V | tail -1)/Contents/Developer
+          XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "${XCODE}/Contents/Developer"
           xcodebuild -version
 
-      - name: 🧪 Install Pods (If Needed)
+      - name: 🧱 Install CocoaPods Dependencies
+        if: hashFiles('iosApp/Podfile') != ''
         run: |
-          if [ -f "iosApp/Podfile" ]; then
-            echo "Podfile found, installing CocoaPods..."
-            gem install cocoapods --no-document
-            cd iosApp && pod install
-          else
-            echo "No Podfile found, skipping CocoaPods."
-          fi
+          gem install cocoapods --no-document
+          cd iosApp && pod install --repo-update
 
       - name: 📦 Generate Xcode Project
-        run: ./gradlew :composeApp:generateXcodeProject
+        run: ./gradlew :composeApp:generateXcodeProject --stacktrace
 
-      - name: 🔨 Build iOS
+      - name: 🔨 Build iOS Simulator
         working-directory: iosApp
+        # set -o pipefail ensures xcpretty doesn't swallow a non-zero exit code.
         run: |
-          # Auto-detect workspace or project file
-          if [ -f "iosApp.xcworkspace" ]; then
-            BUILD_TYPE="-workspace iosApp.xcworkspace"
-          else
-            BUILD_TYPE="-project iosApp.xcodeproj"
-          fi
-          
-          xcodebuild build \
-            $BUILD_TYPE \
-            -scheme iosApp \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
-            -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO
+          set -o pipefail
+          gem install xcpretty --no-document 2>/dev/null || true
 
-  # ==========================================
-  # 🌐 Web Debug (WASM + JS)
-  # ==========================================
+          if [ -f "iosApp.xcworkspace" ]; then
+            BUILD_FLAG="-workspace iosApp.xcworkspace"
+          else
+            BUILD_FLAG="-project iosApp.xcodeproj"
+          fi
+
+          xcodebuild build \
+            $BUILD_FLAG \
+            -scheme iosApp \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -configuration Debug \
+            -parallelizeTargets \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color
+
+  # ============================================================
+  # 🌐 WEB — WASM + JS builds + GitHub Pages deploy
+  # ============================================================
   web:
     name: 🌐 Web Debug
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Fix 403 Permission Denied error
+    timeout-minutes: 25
+    needs: validate
     permissions:
-      contents: write
+      contents: write       # Required for peaceiris/actions-gh-pages
 
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 👑 Fix Gradle Permission
-        run: chmod +x ./gradlew
-
-      - name: ☕ Setup JDK
+      - name: ☕ Setup JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
-          cache: gradle
+          distribution: temurin
 
-      - name: 📦 Setup Node
+      - name: 🗂️ Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+
+      - name: 👑 Fix Gradle Permissions
+        run: chmod +x ./gradlew
+
+      # Node is used by the Kotlin/Wasm toolchain internally.
+      - name: 📦 Setup Node 22 LTS
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+          cache: npm
 
-      - name: 🔨 Build WASM
+      - name: 🔨 Build WASM Distribution
         run: ./gradlew :composeApp:wasmJsBrowserDistribution --stacktrace
 
-      - name: 🔨 Build JS
+      - name: 🔨 Build JS Distribution
         run: ./gradlew :composeApp:jsBrowserDistribution --stacktrace
 
-      - name: 📤 Upload WASM
+      - name: 📤 Upload WASM Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: web-wasm
+          name: web-wasm-${{ github.sha }}-${{ github.run_number }}
           path: composeApp/build/dist/wasmJs/productionExecutable/
           retention-days: 7
+          if-no-files-found: error
 
-      - name: 📤 Upload JS
+      - name: 📤 Upload JS Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: web-js
+          name: web-js-${{ github.sha }}-${{ github.run_number }}
           path: composeApp/build/dist/js/productionExecutable/
           retention-days: 7
+          if-no-files-found: error
 
-      - name: 🚀 Deploy to Pages
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      # Deploy only on a direct push/merge to main or master,
+      # or when force_deploy is set via workflow_dispatch.
+      - name: 🚀 Deploy to GitHub Pages
+        if: |
+          (github.event_name != 'pull_request') &&
+          (
+            github.ref == 'refs/heads/main' ||
+            github.ref == 'refs/heads/master' ||
+            github.event.inputs.force_deploy == 'true'
+          )
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./composeApp/build/dist/wasmJs/productionExecutable/
+          keep_files: false
+          commit_message: '🚀 Deploy ${{ github.sha }} [skip ci]'
+
+  # ============================================================
+  # ✅ CI SUMMARY — single required check for branch protection
+  # ============================================================
+  ci-summary:
+    name: ✅ CI Summary
+    runs-on: ubuntu-latest
+    # Always run, even when upstream jobs are skipped or cancelled.
+    if: always()
+    needs: [validate, android, ios, web]
+    permissions:
+      contents: read
+
+    steps:
+      - name: 📋 Evaluate Pipeline Results
+        run: |
+          echo "┌──────────────────────────────────┐"
+          echo "│        CI Pipeline Summary        │"
+          echo "├──────────────┬───────────────────┤"
+          echo "│ validate     │ ${{ needs.validate.result }}"
+          echo "│ android      │ ${{ needs.android.result }}"
+          echo "│ ios          │ ${{ needs.ios.result }}"
+          echo "│ web          │ ${{ needs.web.result }}"
+          echo "└──────────────┴───────────────────┘"
+
+          FAILED=false
+          for result in \
+            "${{ needs.validate.result }}" \
+            "${{ needs.android.result }}" \
+            "${{ needs.ios.result }}" \
+            "${{ needs.web.result }}"; do
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              FAILED=true
+            fi
+          done
+
+          if [[ "$FAILED" == "true" ]]; then
+            echo "❌ One or more jobs failed. See above for details."
+            exit 1
+          fi
+
+          echo "✅ All jobs passed successfully."
