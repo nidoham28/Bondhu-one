@@ -81,10 +81,15 @@ jobs:
           sudo xcode-select -s $(ls -d /Applications/Xcode*.app | sort -V | tail -1)/Contents/Developer
           xcodebuild -version
 
-      - name: 🧪 Install Pods
+      - name: 🧪 Install Pods (If Needed)
         run: |
-          gem install cocoapods --no-document
-          cd iosApp && pod install
+          if [ -f "iosApp/Podfile" ]; then
+            echo "Podfile found, installing CocoaPods..."
+            gem install cocoapods --no-document
+            cd iosApp && pod install
+          else
+            echo "No Podfile found, skipping CocoaPods."
+          fi
 
       - name: 📦 Generate Xcode Project
         run: ./gradlew :composeApp:generateXcodeProject
@@ -92,8 +97,15 @@ jobs:
       - name: 🔨 Build iOS
         working-directory: iosApp
         run: |
+          # Auto-detect workspace or project file
+          if [ -f "iosApp.xcworkspace" ]; then
+            BUILD_TYPE="-workspace iosApp.xcworkspace"
+          else
+            BUILD_TYPE="-project iosApp.xcodeproj"
+          fi
+          
           xcodebuild build \
-            -workspace iosApp.xcworkspace \
+            $BUILD_TYPE \
             -scheme iosApp \
             -destination 'platform=iOS Simulator,name=iPhone 16' \
             -configuration Debug \
@@ -106,6 +118,9 @@ jobs:
     name: 🌐 Web Debug
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Fix 403 Permission Denied error
+    permissions:
+      contents: write
 
     steps:
       - name: 📥 Checkout
