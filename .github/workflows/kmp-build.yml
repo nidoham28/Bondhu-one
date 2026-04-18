@@ -214,7 +214,7 @@ jobs:
           xcodebuild build \
             $BUILD_FLAG \
             -scheme iosApp \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination 'generic/platform=iOS Simulator' \
             -configuration Debug \
             -parallelizeTargets \
             CODE_SIGNING_ALLOWED=NO \
