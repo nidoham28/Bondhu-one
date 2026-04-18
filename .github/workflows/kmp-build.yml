@@ -5,13 +5,7 @@ on:
     branches: [main, master, develop]
   pull_request:
     branches: [main, master, develop]
-  workflow_dispatch:
-    inputs:
-      force_deploy:
-        description: 'Force deploy web to GitHub Pages (skips branch check)'
-        required: false
-        default: 'false'
-        type: boolean
+  workflow_dispatch: {}
 
 # Cancel in-flight runs for the same ref, but NEVER cancel main/master.
 concurrency:
@@ -280,16 +274,10 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      # Deploy only on a direct push/merge to main or master,
-      # or when force_deploy is set via workflow_dispatch.
+      # ✅ FIXED: Deploy on every non-PR trigger — push to any branch
+      # (main, master, develop) or any manual workflow_dispatch run.
       - name: 🚀 Deploy to GitHub Pages
-        if: |
-          (github.event_name != 'pull_request') &&
-          (
-            github.ref == 'refs/heads/main' ||
-            github.ref == 'refs/heads/master' ||
-            github.event.inputs.force_deploy == 'true'
-          )
+        if: github.event_name != 'pull_request'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
