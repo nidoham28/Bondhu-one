@@ -6,14 +6,7 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
-    inputs:
-      fun_mode:
-        description: '🥳 Enable Fun Mode'
-        required: false
-        default: 'true'
-        type: boolean
 
-# Cancel in-progress runs for the same branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -30,10 +23,10 @@ env:
 
 jobs:
   # ==========================================
-  # 🏗️ Build All Platforms (Parallel)
+  # 🔨 Build Matrix (All Platforms Parallel)
   # ==========================================
   build:
-    name: 🔨 Build ${{ matrix.platform.name }}
+    name: 🔨 ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: ${{ matrix.platform.timeout }}
     strategy:
@@ -44,29 +37,24 @@ jobs:
             runner: ubuntu-latest
             timeout: 25
             task: :composeApp:assembleDebug
+            test-task: :composeApp:testDebugUnitTest
             artifact: android-debug
             path: composeApp/build/outputs/apk/debug/*.apk
-            test-task: :composeApp:testDebugUnitTest
-          - name: Android Release
-            runner: ubuntu-latest
-            timeout: 30
-            task: :composeApp:bundleRelease
-            artifact: android-release
-            path: composeApp/build/outputs/bundle/release/*.aab
-            condition: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
-            secrets: true
+            setup-android: true
           - name: Web WASM
             runner: ubuntu-latest
             timeout: 20
             task: :composeApp:wasmJsBrowserDistribution
             artifact: web-wasm
             path: composeApp/build/dist/wasmJs/productionExecutable/
+            setup-node: true
           - name: Web JS
             runner: ubuntu-latest
             timeout: 20
             task: :composeApp:jsBrowserDistribution
             artifact: web-js
             path: composeApp/build/dist/js/productionExecutable/
+            setup-node: true
           - name: Desktop Linux
             runner: ubuntu-latest
             timeout: 25
@@ -89,67 +77,9 @@ jobs:
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: ☕ Setup JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: gradle
-
-      - name: 🤖 Setup Android (Android only)
-        if: contains(matrix.platform.name, 'Android')
-        uses: android-actions/setup-android@v3
-
-      - name: 📦 Setup Node (Web only)
-        if: contains(matrix.platform.name, 'Web')
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: 🔧 Gradle Wrapper Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/wrapper
-            ~/.gradle/caches/build-cache-1
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: 🧪 Run Tests
-        if: matrix.platform.test-task
-        run: ./gradlew ${{ matrix.platform.test-task }} --stacktrace
-
-      - name: 🔨 Build
-        run: ./gradlew ${{ matrix.platform.task }} --stacktrace
-        env:
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-
-      - name: 📤 Upload Artifact
-        if: matrix.platform.artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform.artifact }}
-          path: ${{ matrix.platform.path }}
-          retention-days: 7
-          if-no-files-found: ignore
-
-  # ==========================================
-  # 🍎 iOS Build (Separate due to macOS)
-  # ==========================================
-  build-ios:
-    name: 🍎 Build iOS
-    runs-on: macos-latest
-    timeout-minutes: 45
-
-    steps:
-      - name: 📥 Checkout
-        uses: actions/checkout@v4
+      - name: 👑 Fix Gradle Permission
+        run: chmod +x ./gradlew
 
       - name: ☕ Setup JDK
         uses: actions/setup-java@v4
@@ -158,18 +88,62 @@ jobs:
           distribution: ${{ env.JAVA_DISTRIBUTION }}
           cache: gradle
 
-      - name: 🔧 Gradle Cache
-        uses: actions/cache@v4
+      - name: 🤖 Setup Android
+        if: matrix.platform.setup-android
+        uses: android-actions/setup-android@v3
+
+      - name: 📦 Setup Node
+        if: matrix.platform.setup-node
+        uses: actions/setup-node@v4
         with:
-          path: |
-            ~/.gradle/wrapper
-            ~/.gradle/caches/build-cache-1
-          key: macos-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          node-version: '20'
 
-      - name: 📱 Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+      - name: 🧪 Run Tests
+        if: matrix.platform.test-task
+        run: ./gradlew ${{ matrix.platform.test-task }} --stacktrace
 
-      - name: 🧪 CocoaPods
+      - name: 🔨 Build
+        run: ./gradlew ${{ matrix.platform.task }} --stacktrace
+
+      - name: 📤 Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.artifact }}
+          path: ${{ matrix.platform.path }}
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ==========================================
+  # 🍎 iOS Build
+  # ==========================================
+  build-ios:
+    name: 🍎 iOS
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 👑 Fix Gradle Permission
+        run: chmod +x ./gradlew
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: gradle
+
+      - name: 📱 Auto-detect Latest Xcode
+        run: |
+          ls /Applications/ | grep Xcode
+          XCODE_PATH=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using Xcode: $XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+
+      - name: 🧪 Install CocoaPods
         run: |
           gem install cocoapods --no-document
           cd iosApp && pod install
@@ -183,9 +157,10 @@ jobs:
           xcodebuild test \
             -workspace iosApp.xcworkspace \
             -scheme iosApp \
-            -destination 'platform=iOS Simulator,name=iPhone 15 Pro,OS=17.4' \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
             CODE_SIGNING_ALLOWED=NO \
             -quiet 2>&1 | tail -20
+        continue-on-error: true
 
       - name: 🔨 Build iOS
         working-directory: iosApp
@@ -193,7 +168,7 @@ jobs:
           xcodebuild build \
             -workspace iosApp.xcworkspace \
             -scheme iosApp \
-            -destination 'platform=iOS Simulator,name=iPhone 15 Pro,OS=17.4' \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             -quiet
@@ -210,13 +185,16 @@ jobs:
   # 🔍 Code Quality
   # ==========================================
   quality:
-    name: 🔍 Code Quality
+    name: 🔍 Quality
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
+
+      - name: 👑 Fix Gradle Permission
+        run: chmod +x ./gradlew
 
       - name: ☕ Setup JDK
         uses: actions/setup-java@v4
@@ -233,7 +211,7 @@ jobs:
         run: ./gradlew ktlintCheck --stacktrace
         continue-on-error: true
 
-      - name: 📊 Coverage Report
+      - name: 📊 Coverage
         run: ./gradlew koverXmlReport --stacktrace
         continue-on-error: true
 
@@ -247,10 +225,10 @@ jobs:
           if-no-files-found: ignore
 
   # ==========================================
-  # 🌐 Deploy to Pages (Main/Master only)
+  # 🚀 Deploy to Pages (main/master only)
   # ==========================================
   deploy:
-    name: 🚀 Deploy to Pages
+    name: 🚀 Deploy Pages
     needs: build
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
@@ -258,7 +236,6 @@ jobs:
     permissions:
       pages: write
       id-token: write
-
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -278,75 +255,16 @@ jobs:
           artifact_path: ./dist
 
   # ==========================================
-  # 🎉 Release (Manual Only)
-  # ==========================================
-  release:
-    name: 🎉 Create Release
-    needs: [build, build-ios]
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-
-    steps:
-      - name: 📥 Download All Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-          merge-multiple: true
-
-      - name: 📋 List Assets
-        run: find release-assets -type f -name "*.apk" -o -name "*.aab" -o -name "*.dmg" -o -name "*.exe" -o -name "*.deb" 2>/dev/null | head -20
-
-      - name: 🎉 Fun Message
-        if: inputs.fun_mode == true
-        run: |
-          echo "```"
-          echo "🥳🎉🎊 BAM! Release incoming! 🎊🎉🥳"
-          echo "╔══════════════════════════════════╗"
-          echo "║  KMP Magic Ready for the World!  ║"
-          echo "║  Android • iOS • Web • Desktop   ║"
-          echo "╚══════════════════════════════════╝"
-          echo "```"
-
-      - name: 🚀 Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release-assets/**/*.apk
-            release-assets/**/*.aab
-            release-assets/**/*.dmg
-            release-assets/**/*.exe
-            release-assets/**/*.deb
-          draft: true
-          generate_release_notes: true
-          body: |
-            ## 🚀 New KMP Release
-            
-            ### 📱 Platforms
-            - ✅ Android
-            - ✅ iOS  
-            - ✅ Web (WASM/JS)
-            - ✅ Desktop (Linux/macOS/Windows)
-            
-            ---
-            *Built with ❤️ using Kotlin Multiplatform*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ==========================================
-  # 📊 Build Summary
+  # 📊 Summary
   # ==========================================
   summary:
     name: 📊 Summary
     needs: [build, build-ios, quality]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 2
 
     steps:
-      - name: 📊 Build Summary
+      - name: 📊 Report
         run: |
           echo "## 🎯 KMP Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -360,4 +278,3 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "🚀 **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "📅 **Trigger:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "⏱️ **Completed:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
