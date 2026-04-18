@@ -48,7 +48,7 @@ The project uses Gradle with a version catalogue (`libs.versions.toml`) for depe
 - Android Studio Hedgehog or later (with KMP plugin installed)
 - JDK 21 (Temurin distribution recommended)
 - Xcode 16 or later (required for iOS builds on macOS)
-- Node.js 22 LTS (required for Web/WASM builds)
+- Node.js 22 LTS (required for Web/WASM builds) 
 
 ### Clone the Repository
 
