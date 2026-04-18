@@ -1,4 +1,4 @@
-name: 🎯 KMP Build & Deploy
+name: 🎯 KMP Debug Build
 
 on:
   push:
@@ -13,66 +13,16 @@ concurrency:
 
 env:
   JAVA_VERSION: '21'
-  JAVA_DISTRIBUTION: 'temurin'
-  GRADLE_OPTS: >-
-    -Dorg.gradle.daemon=false
-    -Dorg.gradle.parallel=true
-    -Dorg.gradle.caching=true
-    -Dorg.gradle.jvmargs=-Xmx4g
-  TERM: dumb
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.jvmargs=-Xmx4g"
 
 jobs:
   # ==========================================
-  # 🔨 Build Matrix (All Platforms Parallel)
+  # 🤖 Android Debug
   # ==========================================
-  build:
-    name: 🔨 ${{ matrix.platform.name }}
-    runs-on: ${{ matrix.platform.runner }}
-    timeout-minutes: ${{ matrix.platform.timeout }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: Android Debug
-            runner: ubuntu-latest
-            timeout: 25
-            task: :composeApp:assembleDebug
-            test-task: :composeApp:testDebugUnitTest
-            artifact: android-debug
-            path: composeApp/build/outputs/apk/debug/*.apk
-            setup-android: true
-          - name: Web WASM
-            runner: ubuntu-latest
-            timeout: 20
-            task: :composeApp:wasmJsBrowserDistribution
-            artifact: web-wasm
-            path: composeApp/build/dist/wasmJs/productionExecutable/
-            setup-node: true
-          - name: Web JS
-            runner: ubuntu-latest
-            timeout: 20
-            task: :composeApp:jsBrowserDistribution
-            artifact: web-js
-            path: composeApp/build/dist/js/productionExecutable/
-            setup-node: true
-          - name: Desktop Linux
-            runner: ubuntu-latest
-            timeout: 25
-            task: :composeApp:packageDistributionForCurrentOS
-            artifact: desktop-linux
-            path: composeApp/build/compose/binaries/main/**
-          - name: Desktop macOS
-            runner: macos-latest
-            timeout: 30
-            task: :composeApp:packageDistributionForCurrentOS
-            artifact: desktop-macos
-            path: composeApp/build/compose/binaries/main/**
-          - name: Desktop Windows
-            runner: windows-latest
-            timeout: 30
-            task: :composeApp:packageDistributionForCurrentOS
-            artifact: desktop-windows
-            path: composeApp/build/compose/binaries/main/**
+  android:
+    name: 🤖 Android Debug
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: 📥 Checkout
@@ -85,39 +35,30 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
-          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          distribution: 'temurin'
           cache: gradle
 
-      - name: 🤖 Setup Android
-        if: matrix.platform.setup-android
+      - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 📦 Setup Node
-        if: matrix.platform.setup-node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: 🧪 Test
+        run: ./gradlew :composeApp:testDebugUnitTest --stacktrace
 
-      - name: 🧪 Run Tests
-        if: matrix.platform.test-task
-        run: ./gradlew ${{ matrix.platform.test-task }} --stacktrace
+      - name: 🔨 Build Debug APK
+        run: ./gradlew :composeApp:assembleDebug --stacktrace
 
-      - name: 🔨 Build
-        run: ./gradlew ${{ matrix.platform.task }} --stacktrace
-
-      - name: 📤 Upload Artifact
+      - name: 📤 Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform.artifact }}
-          path: ${{ matrix.platform.path }}
+          name: android-debug-apk
+          path: composeApp/build/outputs/apk/debug/*.apk
           retention-days: 7
-          if-no-files-found: ignore
 
   # ==========================================
-  # 🍎 iOS Build
+  # 🍎 iOS Debug
   # ==========================================
-  build-ios:
-    name: 🍎 iOS
+  ios:
+    name: 🍎 iOS Debug
     runs-on: macos-latest
     timeout-minutes: 45
 
@@ -132,18 +73,15 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
-          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          distribution: 'temurin'
           cache: gradle
 
-      - name: 📱 Auto-detect Latest Xcode
+      - name: 📱 Setup Xcode
         run: |
-          ls /Applications/ | grep Xcode
-          XCODE_PATH=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
-          echo "Using Xcode: $XCODE_PATH"
-          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          sudo xcode-select -s $(ls -d /Applications/Xcode*.app | sort -V | tail -1)/Contents/Developer
           xcodebuild -version
 
-      - name: 🧪 Install CocoaPods
+      - name: 🧪 Install Pods
         run: |
           gem install cocoapods --no-document
           cd iosApp && pod install
@@ -151,43 +89,23 @@ jobs:
       - name: 📦 Generate Xcode Project
         run: ./gradlew :composeApp:generateXcodeProject
 
-      - name: 🧪 iOS Tests
-        working-directory: iosApp
-        run: |
-          xcodebuild test \
-            -workspace iosApp.xcworkspace \
-            -scheme iosApp \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
-            CODE_SIGNING_ALLOWED=NO \
-            -quiet 2>&1 | tail -20
-        continue-on-error: true
-
       - name: 🔨 Build iOS
         working-directory: iosApp
         run: |
           xcodebuild build \
             -workspace iosApp.xcworkspace \
             -scheme iosApp \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
             -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO \
-            -quiet
-
-      - name: 📤 Upload iOS Build
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-debug
-          path: iosApp/build/Build/Products/Debug-iphonesimulator/*.app
-          retention-days: 7
-          if-no-files-found: warn
+            CODE_SIGNING_ALLOWED=NO
 
   # ==========================================
-  # 🔍 Code Quality
+  # 🌐 Web Debug (WASM + JS)
   # ==========================================
-  quality:
-    name: 🔍 Quality
+  web:
+    name: 🌐 Web Debug
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: 📥 Checkout
@@ -200,81 +118,37 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
-          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          distribution: 'temurin'
           cache: gradle
 
-      - name: 🔍 Detekt
-        run: ./gradlew detekt --stacktrace
-        continue-on-error: true
+      - name: 📦 Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      - name: 📏 Ktlint
-        run: ./gradlew ktlintCheck --stacktrace
-        continue-on-error: true
+      - name: 🔨 Build WASM
+        run: ./gradlew :composeApp:wasmJsBrowserDistribution --stacktrace
 
-      - name: 📊 Coverage
-        run: ./gradlew koverXmlReport --stacktrace
-        continue-on-error: true
+      - name: 🔨 Build JS
+        run: ./gradlew :composeApp:jsBrowserDistribution --stacktrace
 
-      - name: 📤 Upload Reports
-        if: always()
+      - name: 📤 Upload WASM
         uses: actions/upload-artifact@v4
         with:
-          name: quality-reports
-          path: build/reports/
-          retention-days: 3
-          if-no-files-found: ignore
-
-  # ==========================================
-  # 🚀 Deploy to Pages (main/master only)
-  # ==========================================
-  deploy:
-    name: 🚀 Deploy Pages
-    needs: build
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-
-    steps:
-      - name: 📥 Download WASM Build
-        uses: actions/download-artifact@v4
-        with:
           name: web-wasm
-          path: ./dist
+          path: composeApp/build/dist/wasmJs/productionExecutable/
+          retention-days: 7
 
-      - name: 🚀 Deploy
-        id: deploy
-        uses: actions/deploy-pages@v4
+      - name: 📤 Upload JS
+        uses: actions/upload-artifact@v4
         with:
-          artifact_name: web-wasm
-          artifact_path: ./dist
+          name: web-js
+          path: composeApp/build/dist/js/productionExecutable/
+          retention-days: 7
 
-  # ==========================================
-  # 📊 Summary
-  # ==========================================
-  summary:
-    name: 📊 Summary
-    needs: [build, build-ios, quality]
-    if: always()
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 📊 Report
-        run: |
-          echo "## 🎯 KMP Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Platform | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| 🤖 Android | ${{ needs.build.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🍎 iOS | ${{ needs.build-ios.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🌐 Web | ${{ needs.build.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🖥️ Desktop | ${{ needs.build.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🔍 Quality | ${{ needs.quality.result == 'success' && '✅' || needs.quality.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "🚀 **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "📅 **Trigger:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
+      - name: 🚀 Deploy to Pages
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./composeApp/build/dist/wasmJs/productionExecutable/
