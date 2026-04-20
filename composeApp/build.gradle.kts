@@ -15,7 +15,7 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
-    
+
     listOf(
         iosArm64(),
         iosSimulatorArm64()
@@ -25,23 +25,24 @@ kotlin {
             isStatic = true
         }
     }
-    
+
     js {
         browser()
         binaries.executable()
     }
-    
+
     @OptIn(ExperimentalWasmDsl::class)
     wasmJs {
         browser()
         binaries.executable()
     }
-    
+
     sourceSets {
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
         }
+
         commonMain.dependencies {
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
@@ -52,6 +53,27 @@ kotlin {
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)
         }
+
+        // --- SHARED WEB CONFIGURATION ---
+
+        val webMain by creating {
+            dependsOn(commonMain.get())
+            dependencies {
+                // This explicitly grants webMain access to Browser/DOM APIs
+                implementation(kotlin("stdlib-js"))
+            }
+        }
+
+        val jsMain by getting {
+            dependsOn(webMain)
+        }
+
+        val wasmJsMain by getting {
+            dependsOn(webMain)
+        }
+
+        // --------------------------------
+
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
@@ -88,4 +110,3 @@ android {
 dependencies {
     debugImplementation(libs.compose.uiTooling)
 }
-
