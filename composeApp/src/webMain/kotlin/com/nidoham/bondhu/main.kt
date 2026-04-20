@@ -9,6 +9,7 @@ fun main() {
     // Replace "compose-app" with the ID used in your index.html
     ComposeViewport(viewportContainerId = "compose-app") {
         BondhuTheme {
+            App()
         }
     }
 }

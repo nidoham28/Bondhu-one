@@ -12,7 +12,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             BondhuTheme {
-                // Call your shared App entry point here
+                App()
             }
         }
     }
