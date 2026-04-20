@@ -54,24 +54,6 @@ kotlin {
             implementation(libs.androidx.lifecycle.runtimeCompose)
         }
 
-        // --- SHARED WEB CONFIGURATION ---
-
-        val webMain by creating {
-            dependsOn(commonMain.get())
-            dependencies {
-                // This explicitly grants webMain access to Browser/DOM APIs
-                implementation(kotlin("stdlib-js"))
-            }
-        }
-
-        val jsMain by getting {
-            dependsOn(webMain)
-        }
-
-        val wasmJsMain by getting {
-            dependsOn(webMain)
-        }
-
         // --------------------------------
 
         commonTest.dependencies {
